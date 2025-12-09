@@ -2,25 +2,27 @@ package org.example.model;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
-import lombok.NonNull;
+import lombok.NoArgsConstructor;
 
 import javax.validation.constraints.NotBlank;
+import javax.validation.constraints.NotNull;
 
 @Data
+@NoArgsConstructor
 public class RepeatRequest {
     @Schema(description = "Задержка между повторами в миллисекундах")
-    private final int delayInMillis;
+    @NotNull
+    private Integer delayInMillis;
 
     @Schema(description = "Количество повторов сообщений")
-    private final int repeatCount;
+    @NotNull
+    private Integer repeatCount;
 
     @Schema(description = "Пользователь-инициатор повтора сообщений")
     @NotBlank
-    @NonNull
-    private final String username;
+    private String username;
 
     @Schema(description = "Сообщение, которое требуется повторить")
     @NotBlank
-    @NonNull
-    private final String message;
+    private String message;
 }

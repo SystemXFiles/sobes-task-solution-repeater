@@ -33,6 +33,6 @@ public class RepeatController {
     @GetMapping
     @Operation(description = "Получает историю выполнения отправок сообщений")
     public List<HistoryItem> getHistory() {
-        return repeatService.getHistoryOfRequests();
+        return repeatService.getHistoryOfRepeats();
     }
 }
