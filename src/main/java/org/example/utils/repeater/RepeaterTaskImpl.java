@@ -16,7 +16,7 @@ class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
     // Допустим кто-то в будущем код решил доработать и не знает особенности работы текущей реализации.
 
     private volatile int repeatNumber = 0;
-    private long startAfterTime = TimeUtils.now();
+    private long startAfterTime = TimeUtils.nowNanoTime();
 
     private final TaskFuture taskFuture = new TaskFuture();
 
@@ -51,12 +51,12 @@ class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
     }
 
     long timeUntilNextRun() {
-        return startAfterTime - TimeUtils.now();
+        return startAfterTime - TimeUtils.nowNanoTime();
     }
 
     private void scheduleNextLaunch() {
         var nextLaunchTime = startAfterTime + repeatDelayInNanos;
-        var now = TimeUtils.now();
+        var now = TimeUtils.nowNanoTime();
 
         // Данный max решает две проблемы:
         // 1. Если кто-то додумался repeatDelayInMillis бахнуть 0, то у нас startAfterTime не будет вообще меняться
