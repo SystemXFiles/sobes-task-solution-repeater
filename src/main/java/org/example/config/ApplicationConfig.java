@@ -1,12 +1,12 @@
 package org.example.config;
 
-import lombok.Getter;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Configuration;
+import lombok.Value;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.ConstructorBinding;
 
-@Configuration
-@Getter
+@Value
+@ConstructorBinding
+@ConfigurationProperties(prefix = "application")
 public class ApplicationConfig {
-    @Value("${application.poolSize}")
-    private int poolSize;
+    int poolSize;
 }
