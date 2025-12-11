@@ -51,7 +51,8 @@ public class Repeater {
             return EMPTY_TASK;
         }
 
-        RepeaterTaskImpl repeaterTask = new RepeaterTaskImpl(repeatCount, repeatDelayInMillis, repeaterCallback);
+        long repeatDelayInNanos = TimeUnit.MILLISECONDS.toNanos(repeatDelayInMillis);
+        RepeaterTaskImpl repeaterTask = new RepeaterTaskImpl(repeatCount, repeatDelayInNanos, repeaterCallback);
         addToQueueAndSignalAboutChanges(repeaterTask);
 
         return repeaterTask;
@@ -92,7 +93,7 @@ public class Repeater {
                         jobToRun = queue.poll();
                     } else {
                         //noinspection ResultOfMethodCallIgnored
-                        queueChanged.await(timeUntilNextRun, TimeUnit.MILLISECONDS);
+                        queueChanged.awaitNanos(timeUntilNextRun);
                     }
                 }
             }

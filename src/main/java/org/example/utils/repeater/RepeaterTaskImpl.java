@@ -1,13 +1,14 @@
 package org.example.utils.repeater;
 
 import lombok.RequiredArgsConstructor;
+import org.example.utils.TimeUtils;
 
 import java.util.concurrent.atomic.AtomicReference;
 
 @RequiredArgsConstructor
 class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
     private final int repeatCount;
-    private final int repeatDelayInMillis;
+    private final long repeatDelayInNanos;
     private final RepeaterCallback repeaterCallback;
 
     private final Object lock = new Object();
@@ -19,7 +20,7 @@ class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
     // Допустим кто-то в будущем код решил доработать и не знает особенности работы текущей реализации.
 
     private volatile int repeatNumber = 0;
-    private Long startAfterTime = System.currentTimeMillis();
+    private Long startAfterTime = TimeUtils.now();
 
     @Override
     public void await() throws InterruptedException {
@@ -64,12 +65,12 @@ class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
     }
 
     long timeUntilNextRun() {
-        return startAfterTime - System.currentTimeMillis();
+        return startAfterTime - TimeUtils.now();
     }
 
     private void scheduleNextLaunch() {
-        long nextLaunchTime = startAfterTime + repeatDelayInMillis;
-        long now = System.currentTimeMillis();
+        long nextLaunchTime = startAfterTime + repeatDelayInNanos;
+        long now = TimeUtils.now();
 
         // Данный max решает две проблемы:
         // 1. Если кто-то додумался repeatDelayInMillis бахнуть 0, то у нас startAfterTime не будет вообще меняться
