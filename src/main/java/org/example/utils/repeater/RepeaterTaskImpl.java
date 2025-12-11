@@ -35,19 +35,19 @@ class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
     }
 
     void execute() {
-        try {
-            // Инкрементация допустима, ибо у нас владеть текущей задачей может только один поток,
-            // соответственно инкремент нормально отработает несмотря на свою не-атомарность
+        // Инкрементация допустима, ибо у нас владеть текущей задачей может только один поток,
+        // соответственно инкремент нормально отработает несмотря на свою не-атомарность
 
-            //noinspection NonAtomicOperationOnVolatileField
-            repeaterCallback.callback(repeatNumber++);
-        } catch (Throwable e) {
-            taskFuture.signalError(e);
-        }
+        //noinspection NonAtomicOperationOnVolatileField
+        repeaterCallback.callback(repeatNumber++);
     }
 
     void signalComplete() {
         taskFuture.signalComplete();
+    }
+
+    public void signalError(Throwable throwable) {
+        taskFuture.signalError(throwable);
     }
 
     long timeUntilNextRun() {

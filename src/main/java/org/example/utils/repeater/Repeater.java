@@ -16,16 +16,19 @@ public class Repeater {
     private static final RepeaterTask EMPTY_TASK = new RepeaterTask() {
     };
 
-    // Специально задействовал ReentrantLock fair = true, чтобы справедливо нагрузка раскидывалась по потокам,
-    // Ибо не хочется городить свою справедливость на базе synchronized/wait/notify(All), лень =)
+    private final ReentrantLock queueLock = new ReentrantLock();
 
-    private final ReentrantLock queueLock = new ReentrantLock(true);
-    private final Condition queueChanged = queueLock.newCondition();
+    // Два Condition нужны, чтобы не всем просыпаться по таймеру, а одному, а он уже, если надо, пробудит других
+    private final Condition timerWait = queueLock.newCondition();
+    private final Condition idleWait = queueLock.newCondition();
 
     private final PriorityQueue<RepeaterTaskImpl> priorityQueue = new PriorityQueue<>();
 
     private final List<Thread> workers = new ArrayList<>();
     private final int workerPoolSize;
+
+    // Поток, который дежурит, ибо нет смысла всем потокам сидеть на таймере
+    private Thread timerWaiter = null;
 
     public Repeater(int workerPoolSize) {
         this.workerPoolSize = workerPoolSize;
@@ -66,57 +69,114 @@ public class Repeater {
 
     private void handleQueue() {
         while (!Thread.interrupted()) {
-            var jobToRun = waitNext();
+            try {
+                var jobToRun = waitNext();
 
-            // null возвращается из waitNext только в случае если был прерван поток, значит цикл завершаем
-            if (jobToRun == null) break;
+                // null возвращается из waitNext только в случае если был прерван поток, значит цикл завершаем
+                if (jobToRun == null) break;
 
-            jobToRun.execute();
+                try {
+                    jobToRun.execute();
+                } catch (Throwable e) {
+                    jobToRun.signalError(e);
+                }
 
-            if (jobToRun.scheduleNextLaunchIfHasNext()) {
-                addToQueueAndSignalAboutChanges(jobToRun);
-            } else {
-                jobToRun.signalComplete();
+                if (jobToRun.scheduleNextLaunchIfHasNext()) {
+                    addToQueueAndSignalAboutChanges(jobToRun);
+                } else {
+                    jobToRun.signalComplete();
+                }
+            } catch (Throwable throwable) {
+                log.error("Ошибка в рабочем цикле...", throwable);
             }
         }
     }
 
     @Nullable
     private RepeaterTaskImpl waitNext() {
-        RepeaterTaskImpl jobToRun = null;
+        var currentThread = Thread.currentThread();
 
         queueLock.lock();
         try {
-            while (jobToRun == null) {
-                RepeaterTaskImpl head = priorityQueue.peek();
+            while (true) {
+                var head = priorityQueue.peek();
 
+                // Если очередь пуста, то дежурный не нужен и мы отправляемся спать
                 if (head == null) {
-                    queueChanged.await();
-                } else {
-                    long timeUntilNextRun = head.timeUntilNextRun();
-
-                    if (timeUntilNextRun <= 0) {
-                        jobToRun = priorityQueue.poll();
-                    } else {
-                        //noinspection ResultOfMethodCallIgnored
-                        queueChanged.awaitNanos(timeUntilNextRun);
-                    }
+                    clearTimerWaiter();
+                    idleWait.await();
+                    continue;
                 }
+
+                long timeUntilNextRun = head.timeUntilNextRun();
+
+                // Если время задачи уже пришло, забираем ее себе
+                if (timeUntilNextRun <= 0) {
+                    var jobToRun = priorityQueue.poll();
+                    clearTimerWaiter();
+
+                    // Будим кого-нибудь еще, чтобы он стал новым дежурным, ибо сами мы будем сейчас задачу выполнять
+                    idleWait.signal();
+                    return jobToRun;
+                }
+
+
+                // Если дежурный уже есть и это не мы, то отдыхаем пока не пнут нас
+                if (timerWaiter != null && timerWaiter != currentThread) {
+                    idleWait.await();
+                    continue;
+                }
+
+                // Становимся дежурным (тут два варианта либо это уже мы либо его еще нет)
+                timerWaiter = currentThread;
+
+                // Ждем до момента выполнения задачи
+                //noinspection ResultOfMethodCallIgnored
+                timerWait.awaitNanos(timeUntilNextRun);
             }
         } catch (InterruptedException e) {
+            clearTimerWaiterAndWakeupOneIdle();
+            // Возвращаем флаг для кого-нибудь снаружи на всяк случай
             Thread.currentThread().interrupt();
+            return null;
         } finally {
             queueLock.unlock();
         }
+    }
 
-        return jobToRun;
+    private void clearTimerWaiterAndWakeupOneIdle() {
+        if (timerWaiter != Thread.currentThread()) {
+            return;
+        }
+
+        // Словили остановку? Ну теперь мы не дежурный точно
+        timerWaiter = null;
+        // Пытаемся разбудить замену
+        idleWait.signal();
+    }
+
+    private void clearTimerWaiter() {
+        if (timerWaiter == Thread.currentThread()) {
+            timerWaiter = null;
+        }
     }
 
     private void addToQueueAndSignalAboutChanges(RepeaterTaskImpl queueItem) {
         queueLock.lock();
         try {
             priorityQueue.add(queueItem);
-            queueChanged.signalAll();
+
+            // Если задача встала в начало, надо разбудить поток для перерасчета таймера
+            if (priorityQueue.peek() == queueItem) {
+                // Если дежурного нет, будем кого угодно
+                if (timerWaiter == null) {
+                    // Но только одного, зачем нам очередь перед блокировкой?
+                    idleWait.signal();
+                } else {
+                    // Если дежурный есть, будим его (он спит на таймере, надо пересчитать)
+                    timerWait.signal();
+                }
+            }
         } finally {
             queueLock.unlock();
         }
