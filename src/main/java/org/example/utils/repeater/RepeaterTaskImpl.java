@@ -1,9 +1,8 @@
 package org.example.utils.repeater;
 
 import lombok.RequiredArgsConstructor;
+import org.example.utils.TaskFuture;
 import org.example.utils.TimeUtils;
-
-import java.util.concurrent.atomic.AtomicReference;
 
 @RequiredArgsConstructor
 class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
@@ -11,30 +10,19 @@ class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
     private final long repeatDelayInNanos;
     private final RepeaterCallback repeaterCallback;
 
-    private final Object lock = new Object();
-    private final AtomicReference<Throwable> errorHolder = new AtomicReference<>();
-
     // По идее volatile не нужен, ибо у нас барьеры памяти есть благодаря общему lock, но на всякий случай добавил
     // для подстраховки.
     //
     // Допустим кто-то в будущем код решил доработать и не знает особенности работы текущей реализации.
 
     private volatile int repeatNumber = 0;
-    private Long startAfterTime = TimeUtils.now();
+    private long startAfterTime = TimeUtils.now();
+
+    private final TaskFuture taskFuture = new TaskFuture();
 
     @Override
     public void await() throws InterruptedException {
-        synchronized (lock) {
-            while (hasNext()) {
-                lock.wait();
-            }
-        }
-
-        Throwable throwable = errorHolder.get();
-
-        if (throwable != null) {
-            throw new RuntimeException(throwable);
-        }
+        taskFuture.await();
     }
 
     boolean scheduleNextLaunchIfHasNext() {
@@ -48,20 +36,18 @@ class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
 
     void execute() {
         try {
-            // Допустимо, ибо у нас владеть текущей задачей может только один поток,
+            // Инкрементация допустима, ибо у нас владеть текущей задачей может только один поток,
             // соответственно инкремент нормально отработает несмотря на свою не-атомарность
 
             //noinspection NonAtomicOperationOnVolatileField
             repeaterCallback.callback(repeatNumber++);
         } catch (Throwable e) {
-            errorHolder.set(e);
+            taskFuture.signalError(e);
         }
     }
 
-    void signalTaskIsFree() {
-        synchronized (lock) {
-            lock.notify();
-        }
+    void signalComplete() {
+        taskFuture.signalComplete();
     }
 
     long timeUntilNextRun() {
@@ -69,26 +55,26 @@ class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
     }
 
     private void scheduleNextLaunch() {
-        long nextLaunchTime = startAfterTime + repeatDelayInNanos;
-        long now = TimeUtils.now();
+        var nextLaunchTime = startAfterTime + repeatDelayInNanos;
+        var now = TimeUtils.now();
 
         // Данный max решает две проблемы:
         // 1. Если кто-то додумался repeatDelayInMillis бахнуть 0, то у нас startAfterTime не будет вообще меняться
         //    и позиция в очереди соответственно тоже. Как итог задача наша будет каждый раз браться заново, что не
         //    справедливо по отношению к тем, кто дальше в очереди. Потому мы сдвигаем задачу, которая "сразу" должна
-        //    быть выполнена на текущее время. Это дает возможность выполнится другим, время которых уже пришло.
+        //    быть выполнена на текущее время. Это дает возможность выполнится другим, время которых уже пришло (в прошлом уже).
         //
         // 2. Защищает от лавины. Если вдруг сервис завис на долгое время, то могут накопиться задачи на
         //    выполнение. При пробуждении сервиса он захочет все и сразу выполнить задачи, время которых наступило.
         //    max же предотвращает это по сути запрещая планирование задним числом.
+        //    Правда это касается именно повторений, если будет 100 задач отдельных (именно в очереди отдельные объекты),
+        //    они все равно все независимо бахнут, это надо учитывать.
 
         startAfterTime = Math.max(nextLaunchTime, now);
     }
 
     private boolean hasNext() {
-        boolean hasError = errorHolder.get() != null;
-
-        if (hasError) {
+        if (taskFuture.hasError()) {
             return false;
         }
 

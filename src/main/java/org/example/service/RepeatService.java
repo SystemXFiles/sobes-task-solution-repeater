@@ -1,6 +1,7 @@
 package org.example.service;
 
 import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
 import org.example.config.ApplicationConfig;
 import org.example.model.HistoryItem;
 import org.example.model.RepeatRequest;
@@ -13,9 +14,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Service
+@Slf4j
 public class RepeatService {
-    private final Repeater repeater;
     private final List<HistoryItem> historyOfRepeats = new ArrayList<>();
+    private final Repeater repeater;
 
     public RepeatService(ApplicationConfig config) {
         repeater = new Repeater(config.getPoolSize());
@@ -26,21 +28,29 @@ public class RepeatService {
         repeater.repeat(
                 repeatRequest.getRepeatCount(),
                 repeatRequest.getDelayInMillis(),
-                (repeatNumber) -> {
-                    System.out.printf(
-                            "%s %s %d%n",
-                            Thread.currentThread().getName(),
-                            repeatRequest.getMessage(),
-                            repeatNumber
-                    );
-
-                    addToHistory(repeatRequest, repeatNumber);
-                }
+                (repeatNumber) -> executeTask(repeatRequest, repeatNumber)
         ).await();
     }
 
+    public List<HistoryItem> getHistoryOfRepeats() {
+        synchronized (historyOfRepeats) {
+            return List.copyOf(historyOfRepeats);
+        }
+    }
+
+    private void executeTask(RepeatRequest repeatRequest, long repeatNumber) {
+        log.info(
+                "Task executed: threadName='{}', message='{}', repeatNumber={}",
+                Thread.currentThread().getName(),
+                repeatRequest.getMessage(),
+                repeatNumber
+        );
+
+        addToHistory(repeatRequest, repeatNumber);
+    }
+
     private void addToHistory(RepeatRequest repeatRequest, long repeatNumber) {
-        HistoryItem historyItem = new HistoryItem(
+        var historyItem = new HistoryItem(
                 repeatRequest.getUsername(),
                 repeatNumber,
                 repeatRequest.getMessage()
@@ -48,12 +58,6 @@ public class RepeatService {
 
         synchronized (historyOfRepeats) {
             historyOfRepeats.add(historyItem);
-        }
-    }
-
-    public List<HistoryItem> getHistoryOfRepeats() {
-        synchronized (historyOfRepeats) {
-            return List.copyOf(historyOfRepeats);
         }
     }
 

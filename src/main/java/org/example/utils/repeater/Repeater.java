@@ -6,20 +6,23 @@ import org.springframework.lang.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.PriorityQueue;
-import java.util.Queue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 @Slf4j
 public class Repeater {
-    private final static RepeaterTask EMPTY_TASK = new RepeaterTask() {
+    private static final String WORKER_NAME_PREFIX = "Repeater-Worker-";
+    private static final RepeaterTask EMPTY_TASK = new RepeaterTask() {
     };
 
-    private final ReentrantLock lock = new ReentrantLock(true);
-    private final Condition queueChanged = lock.newCondition();
+    // Специально задействовал ReentrantLock fair = true, чтобы справедливо нагрузка раскидывалась по потокам,
+    // Ибо не хочется городить свою справедливость на базе synchronized/wait/notify(All), лень =)
 
-    private final Queue<RepeaterTaskImpl> queue = new PriorityQueue<>();
+    private final ReentrantLock queueLock = new ReentrantLock(true);
+    private final Condition queueChanged = queueLock.newCondition();
+
+    private final PriorityQueue<RepeaterTaskImpl> priorityQueue = new PriorityQueue<>();
 
     private final List<Thread> workers = new ArrayList<>();
     private final int workerPoolSize;
@@ -34,9 +37,11 @@ public class Repeater {
         }
 
         for (int i = 0; i < workerPoolSize; i++) {
-            Thread worker = new Thread(this::handleQueue, "Repeater-Worker-" + i);
+            var worker = new Thread(this::handleQueue, WORKER_NAME_PREFIX + i);
+
             worker.setDaemon(true);
             worker.start();
+
             workers.add(worker);
         }
     }
@@ -51,8 +56,9 @@ public class Repeater {
             return EMPTY_TASK;
         }
 
-        long repeatDelayInNanos = TimeUnit.MILLISECONDS.toNanos(repeatDelayInMillis);
-        RepeaterTaskImpl repeaterTask = new RepeaterTaskImpl(repeatCount, repeatDelayInNanos, repeaterCallback);
+        var repeatDelayInNanos = TimeUnit.MILLISECONDS.toNanos(repeatDelayInMillis);
+        var repeaterTask = new RepeaterTaskImpl(repeatCount, repeatDelayInNanos, repeaterCallback);
+
         addToQueueAndSignalAboutChanges(repeaterTask);
 
         return repeaterTask;
@@ -60,7 +66,7 @@ public class Repeater {
 
     private void handleQueue() {
         while (!Thread.interrupted()) {
-            RepeaterTaskImpl jobToRun = waitNext();
+            var jobToRun = waitNext();
 
             // null возвращается из waitNext только в случае если был прерван поток, значит цикл завершаем
             if (jobToRun == null) break;
@@ -70,7 +76,7 @@ public class Repeater {
             if (jobToRun.scheduleNextLaunchIfHasNext()) {
                 addToQueueAndSignalAboutChanges(jobToRun);
             } else {
-                jobToRun.signalTaskIsFree();
+                jobToRun.signalComplete();
             }
         }
     }
@@ -79,10 +85,10 @@ public class Repeater {
     private RepeaterTaskImpl waitNext() {
         RepeaterTaskImpl jobToRun = null;
 
-        lock.lock();
+        queueLock.lock();
         try {
             while (jobToRun == null) {
-                RepeaterTaskImpl head = queue.peek();
+                RepeaterTaskImpl head = priorityQueue.peek();
 
                 if (head == null) {
                     queueChanged.await();
@@ -90,7 +96,7 @@ public class Repeater {
                     long timeUntilNextRun = head.timeUntilNextRun();
 
                     if (timeUntilNextRun <= 0) {
-                        jobToRun = queue.poll();
+                        jobToRun = priorityQueue.poll();
                     } else {
                         //noinspection ResultOfMethodCallIgnored
                         queueChanged.awaitNanos(timeUntilNextRun);
@@ -100,19 +106,19 @@ public class Repeater {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } finally {
-            lock.unlock();
+            queueLock.unlock();
         }
 
         return jobToRun;
     }
 
     private void addToQueueAndSignalAboutChanges(RepeaterTaskImpl queueItem) {
-        lock.lock();
+        queueLock.lock();
         try {
-            queue.add(queueItem);
+            priorityQueue.add(queueItem);
             queueChanged.signalAll();
         } finally {
-            lock.unlock();
+            queueLock.unlock();
         }
     }
 }
