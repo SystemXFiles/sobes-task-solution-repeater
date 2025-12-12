@@ -25,36 +25,40 @@ class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
         taskFuture.await();
     }
 
-    boolean scheduleNextLaunchIfHasNext() {
-        if (hasNext()) {
-            scheduleNextLaunch();
-            return true;
-        }
-
-        return false;
+    @Override
+    public int compareTo(RepeaterTaskImpl other) {
+        return Long.compare(this.startAfterTime, other.startAfterTime);
     }
 
-    void execute() {
-        // Инкрементация допустима, ибо у нас владеть текущей задачей может только один поток,
-        // соответственно инкремент нормально отработает несмотря на свою не-атомарность
+    void tryExecute() {
+        try {
+            // Инкрементация допустима, ибо у нас владеть текущей задачей может только один поток,
+            // соответственно инкремент нормально отработает несмотря на свою не-атомарность
 
-        //noinspection NonAtomicOperationOnVolatileField
-        repeaterCallback.callback(repeatNumber++);
+            //noinspection NonAtomicOperationOnVolatileField
+            repeaterCallback.callback(repeatNumber++);
+        } catch (Throwable throwable) {
+            // Проверяет, не поймали ли мы случайно исключение прерывания, если да, то восстанавливает флаг, дабы он
+            // дальше корректно был обработан
+            checkInterrupt(throwable);
+
+            signalError(throwable);
+        }
+    }
+
+    boolean hasError() {
+        return taskFuture.hasError();
     }
 
     void signalComplete() {
         taskFuture.signalComplete();
     }
 
-    public void signalError(Throwable throwable) {
-        taskFuture.signalError(throwable);
-    }
-
     long timeUntilNextRun() {
         return startAfterTime - TimeUtils.nowNanoTime();
     }
 
-    private void scheduleNextLaunch() {
+    void calculateAndSetNextLaunchTime() {
         var nextLaunchTime = startAfterTime + repeatDelayInNanos;
         var now = TimeUtils.nowNanoTime();
 
@@ -73,16 +77,22 @@ class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
         startAfterTime = Math.max(nextLaunchTime, now);
     }
 
-    private boolean hasNext() {
-        if (taskFuture.hasError()) {
-            return false;
-        }
-
+    boolean hasNext() {
         return repeatNumber < repeatCount;
     }
 
-    @Override
-    public int compareTo(RepeaterTaskImpl other) {
-        return Long.compare(this.startAfterTime, other.startAfterTime);
+    private void signalError(Throwable throwable) {
+        taskFuture.signalError(throwable);
+    }
+
+    private static void checkInterrupt(Throwable throwable) {
+        boolean isInterruptedException = throwable instanceof InterruptedException;
+        boolean causeIsInterruptedException = throwable.getCause() instanceof InterruptedException;
+
+        if (!isInterruptedException && !causeIsInterruptedException) {
+            return;
+        }
+
+        Thread.currentThread().interrupt();
     }
 }
