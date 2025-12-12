@@ -40,7 +40,7 @@ public class RepeatService {
 
     private void executeTask(RepeatRequest repeatRequest, long repeatNumber) {
         log.info(
-                "Task executed: threadName='{}', message='{}', repeatNumber={}",
+                "Повтор выполнен: threadName='{}', message='{}', repeatNumber={}",
                 Thread.currentThread().getName(),
                 repeatRequest.getMessage(),
                 repeatNumber
