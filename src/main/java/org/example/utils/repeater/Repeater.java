@@ -2,8 +2,28 @@ package org.example.utils.repeater;
 
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.PriorityQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * Утилита для повторного выполнения задач заданное количество раз с требуемой задержкой на указанном количестве воркеров.
+ * <p>
+ * Плюсы:
+ * <ul>
+ *      <li>баланс между простотой и эффективностью (спасибо {@link ReentrantLock} и его {@link Condition}, позволившим сделать красиво код);</li>
+ *      <li>лишний раз блокировки не дергает (один дежурный поток за раз и его пробуждение только когда порядок очереди изменился);</li>
+ *      <li>максимально любит поспать, если работы нет (await ровно до наступления момента выполнения задачи у дежурного потока, остальные спят);</li>
+ *      <li>не требует перебора задач для поиска ближайшей (за счет {@link PriorityQueue}).</li>
+ * </ul>
+ * <p>
+ * Минусы:
+ * <ul>
+ *      <li>при высокой частоте выполнения задач узким местом станет общий queueLock (конкуренция);</li>
+ *      <li>при большом количестве задач в очереди узким местом будет PriorityQueue (рост вычислительной сложности).</li>
+ * </ul>
+ */
 @Slf4j
 public class Repeater {
     private static final RepeaterTask EMPTY_TASK = new RepeaterTask() {
