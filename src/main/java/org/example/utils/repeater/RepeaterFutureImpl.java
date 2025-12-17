@@ -1,6 +1,6 @@
-package org.example.utils;
+package org.example.utils.repeater;
 
-public class TaskFuture {
+class RepeaterFutureImpl implements RepeaterFuture {
     // Так как задача у нас показать владение базовыми synchronized/wait/notify(All),
     // то используем обычный Object lock и городим свою обработку ошибок.
     // А так бы тут хорошо смотрелся бы CompletableFuture, в нем из коробки есть блокирующий join и обработка ошибок.
@@ -13,6 +13,7 @@ public class TaskFuture {
     private Throwable error;
     private boolean isFinished;
 
+    @Override
     public void await() throws InterruptedException {
         synchronized (lock) {
             while (!isFinished) {
@@ -20,19 +21,23 @@ public class TaskFuture {
             }
 
             if (error != null) {
+                if (error instanceof RuntimeException) {
+                    throw (RuntimeException) error;
+                }
+
                 throw new RuntimeException(error);
             }
         }
     }
 
-    public void signalComplete() {
+    void signalComplete() {
         synchronized (lock) {
             isFinished = true;
             lock.notifyAll();
         }
     }
 
-    public void signalError(Throwable throwable) {
+    void signalError(Throwable throwable) {
         synchronized (lock) {
             // Защита от перезаписи результата
             if (isFinished) {
@@ -45,7 +50,7 @@ public class TaskFuture {
         }
     }
 
-    public boolean hasError() {
+    boolean hasError() {
         synchronized (lock) {
             return error != null;
         }

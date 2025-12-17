@@ -3,6 +3,7 @@ package org.example.utils.repeater;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.PriorityQueue;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
@@ -26,16 +27,19 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 @Slf4j
 public class Repeater {
-    private static final RepeaterTask EMPTY_TASK = new RepeaterTask() {
-    };
-
-    private final RepeaterTaskQueue queue = new RepeaterTaskQueue();
-    private final RepeaterWorker[] workers;
-
+    private final RepeaterQueue queue = new RepeaterQueue();
     private volatile boolean isRunning = false;
 
+    private final Thread[] workers;
+    private final ThreadFactory threadFactory;
+
     public Repeater(int workerPoolSize) {
-        workers = new RepeaterWorker[workerPoolSize];
+        this(workerPoolSize, new RepeaterThreadFactory());
+    }
+
+    public Repeater(int workerPoolSize, ThreadFactory threadFactory) {
+        this.workers = new Thread[workerPoolSize];
+        this.threadFactory = threadFactory;
     }
 
     public synchronized void init() {
@@ -44,8 +48,10 @@ public class Repeater {
         }
 
         for (int i = 0; i < workers.length; i++) {
-            workers[i] = new RepeaterWorker(queue, i);
-            workers[i].start();
+            var worker = new RepeaterWorker(queue);
+            var thread = threadFactory.newThread(worker);
+            thread.start();
+            workers[i] = thread;
         }
 
         isRunning = true;
@@ -59,30 +65,37 @@ public class Repeater {
         isRunning = false;
 
         // Сначала все уведомляем, что пора закруглятся
-        for (RepeaterWorker worker : workers) {
-            worker.signalStop();
+        for (var worker : workers) {
+            worker.interrupt();
         }
 
         // Потом ждем завершения всех
-        for (RepeaterWorker worker : workers) {
-            worker.awaitStop();
+        for (var worker : workers) {
+            try {
+                worker.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.warn("Нас прервали во время ожидания остановки");
+            }
         }
     }
 
-    public RepeaterTask repeat(int repeatCount, int repeatDelayInMillis, RepeaterCallback repeaterCallback) {
+    public RepeaterFuture repeat(int repeatCount, int repeatDelayInMillis, RepeaterCallback repeaterCallback) {
         if (!isRunning) {
             throw new IllegalStateException("Repeater не инициализирован или был остановлен");
         }
 
         if (repeatCount < 1) {
-            return EMPTY_TASK;
+            return RepeaterFuture.EMPTY_TASK;
         }
 
         var repeatDelayInNanos = TimeUnit.MILLISECONDS.toNanos(repeatDelayInMillis);
-        var repeaterTask = new RepeaterTaskImpl(repeatCount, repeatDelayInNanos, repeaterCallback);
+        var repeaterFuture = new RepeaterFutureImpl();
+        var repeaterTask = new RepeaterQueueItem(repeatCount, repeatDelayInNanos, repeaterCallback, repeaterFuture);
 
         queue.addTask(repeaterTask);
 
-        return repeaterTask;
+        return repeaterFuture;
     }
 }
+

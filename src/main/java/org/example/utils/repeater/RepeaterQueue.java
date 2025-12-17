@@ -6,7 +6,7 @@ import java.util.PriorityQueue;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
-class RepeaterTaskQueue {
+class RepeaterQueue {
     // ReentrantLock используется благодаря прекрасному Condition,
     // который позволяет будить только того кого надо, а не всех подряд или случайно
     private final ReentrantLock queueLock = new ReentrantLock();
@@ -15,12 +15,12 @@ class RepeaterTaskQueue {
     private final Condition timerWait = queueLock.newCondition();
     private final Condition idleWait = queueLock.newCondition();
 
-    private final PriorityQueue<RepeaterTaskImpl> priorityQueue = new PriorityQueue<>();
+    private final PriorityQueue<RepeaterQueueItem> priorityQueue = new PriorityQueue<>();
 
     // Поток, который дежурит, ибо нет смысла всем потокам сидеть на таймере
     private Thread timerWaiter = null;
 
-    void addTask(RepeaterTaskImpl repeaterTask) {
+    void addTask(RepeaterQueueItem repeaterTask) {
         queueLock.lock();
         try {
             priorityQueue.add(repeaterTask);
@@ -41,8 +41,7 @@ class RepeaterTaskQueue {
         }
     }
 
-    @Nullable
-    RepeaterTaskImpl awaitNextTask() {
+    RepeaterQueueItem awaitNextTask() throws InterruptedException {
         var currentThread = Thread.currentThread();
 
         queueLock.lock();
@@ -57,7 +56,7 @@ class RepeaterTaskQueue {
                     continue;
                 }
 
-                long timeUntilNextRun = head.timeUntilNextRun();
+                var timeUntilNextRun = head.timeUntilNextRun();
 
                 // Если время задачи уже пришло, забираем ее себе
                 if (timeUntilNextRun <= 0) {
@@ -83,11 +82,9 @@ class RepeaterTaskQueue {
                 //noinspection ResultOfMethodCallIgnored
                 timerWait.awaitNanos(timeUntilNextRun);
             }
-        } catch (InterruptedException e) {
+        } catch (InterruptedException interruptedException) {
             clearTimerWaiterAndWakeupOneIdle();
-            // Возвращаем флаг для кого-нибудь снаружи на всяк случай
-            Thread.currentThread().interrupt();
-            return null;
+            throw interruptedException;
         } finally {
             queueLock.unlock();
         }

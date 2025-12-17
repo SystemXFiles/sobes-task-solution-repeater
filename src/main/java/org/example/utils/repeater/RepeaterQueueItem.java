@@ -1,14 +1,14 @@
 package org.example.utils.repeater;
 
 import lombok.RequiredArgsConstructor;
-import org.example.utils.TaskFuture;
 import org.example.utils.TimeUtils;
 
 @RequiredArgsConstructor
-class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
+class RepeaterQueueItem implements Comparable<RepeaterQueueItem> {
     private final int repeatCount;
     private final long repeatDelayInNanos;
     private final RepeaterCallback repeaterCallback;
+    private final RepeaterFutureImpl repeaterFuture;
 
     // По идее volatile не нужен, ибо у нас барьеры памяти есть благодаря общему lock, но на всякий случай добавил
     // для подстраховки.
@@ -18,15 +18,8 @@ class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
     private volatile int repeatNumber = 0;
     private long startAfterTime = TimeUtils.nowNanoTime();
 
-    private final TaskFuture taskFuture = new TaskFuture();
-
     @Override
-    public void await() throws InterruptedException {
-        taskFuture.await();
-    }
-
-    @Override
-    public int compareTo(RepeaterTaskImpl other) {
+    public int compareTo(RepeaterQueueItem other) {
         return Long.compare(this.startAfterTime, other.startAfterTime);
     }
 
@@ -41,17 +34,16 @@ class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
             // Проверяет, не поймали ли мы случайно исключение прерывания, если да, то восстанавливает флаг, дабы он
             // дальше корректно был обработан
             checkInterrupt(throwable);
-
-            signalError(throwable);
+            repeaterFuture.signalError(throwable);
         }
     }
 
     boolean hasError() {
-        return taskFuture.hasError();
+        return repeaterFuture.hasError();
     }
 
     void signalComplete() {
-        taskFuture.signalComplete();
+        repeaterFuture.signalComplete();
     }
 
     long timeUntilNextRun() {
@@ -79,10 +71,6 @@ class RepeaterTaskImpl implements RepeaterTask, Comparable<RepeaterTaskImpl> {
 
     boolean hasNext() {
         return repeatNumber < repeatCount;
-    }
-
-    private void signalError(Throwable throwable) {
-        taskFuture.signalError(throwable);
     }
 
     private static void checkInterrupt(Throwable throwable) {

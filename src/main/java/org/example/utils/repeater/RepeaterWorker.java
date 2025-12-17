@@ -4,31 +4,10 @@ import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 class RepeaterWorker implements Runnable {
-    private static final String WORKER_NAME_PREFIX = "Repeater-Worker-";
-    private final RepeaterTaskQueue queue;
-    private final Thread thread;
+    private final RepeaterQueue queue;
 
-    RepeaterWorker(RepeaterTaskQueue queue, int workerId) {
+    RepeaterWorker(RepeaterQueue queue) {
         this.queue = queue;
-        this.thread = new Thread(this, WORKER_NAME_PREFIX + workerId);
-        this.thread.setDaemon(true);
-    }
-
-    void start() {
-        thread.start();
-    }
-
-    void signalStop() {
-        thread.interrupt();
-    }
-
-    void awaitStop() {
-        try {
-            thread.join();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.warn("Нас прервали во время ожидания остановки");
-        }
     }
 
     @Override
@@ -37,9 +16,6 @@ class RepeaterWorker implements Runnable {
             try {
                 // Извлекаем следующую задачу из очереди (при наличии, иначе ждем)
                 var jobToRun = queue.awaitNextTask();
-
-                // null возвращается из waitNext только в случае если был прерван поток, значит цикл завершаем
-                if (jobToRun == null) break;
 
                 // Пытаемся выполнить задачу
                 jobToRun.tryExecute();
@@ -57,6 +33,9 @@ class RepeaterWorker implements Runnable {
                     // Иначе отмечаем задачу как выполненную
                     jobToRun.signalComplete();
                 }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
             } catch (Throwable throwable) {
                 log.error("Ошибка в рабочем цикле...", throwable);
             }
